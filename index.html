@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Civil Drafting Tool • Standalone v0.9.1</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+        
+        * { box-sizing: border-box; }
+        body { margin:0; font-family: 'Inter', system_ui, sans-serif; background:#0f172a; }
+        
+        .app {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: #0f172a;
+            overflow: hidden;
+        }
+        
+        .toolbar {
+            background: #1e2937;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            border-bottom: 1px solid #334155;
+            z-index: 10;
+        }
+        
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            background: #334155;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .btn:hover { background: #475569; transform: translateY(-1px); }
+        .btn:active { transform: scale(0.98); }
+        .btn.active {
+            background: #22c55e;
+            color: #0f172a;
+            box-shadow: 0 0 0 3px rgba(134, 239, 172, 0.3);
+        }
+        
+        .btn-group {
+            display: flex;
+            background: #334155;
+            border-radius: 8px;
+            padding: 3px;
+        }
+        
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            background: #1e2937;
+            overflow: hidden;
+        }
+        
+        canvas {
+            display: block;
+            image-rendering: crisp-edges;
+        }
+        
+        .info-bar {
+            background: #1e2937;
+            padding: 10px 20px;
+            font-size: 13px;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-top: 1px solid #334155;
+        }
+    </style>
+</head>
+<body>
+    <div id="root" style="width:100%; height:100vh;"></div>
+
+    <script>
+        const { createElement, useState, useRef, useEffect, useCallback } = React
+
+        function CivilDraftingTool() {
+            const canvasRef = useRef(null)
+            const fileInputRef = useRef(null)
+            
+            // Core state
+            const [image, setImage] = useState(null)
+            const [zoom, setZoom] = useState(1)
+            const [panX, setPanX] = useState(0)
+            const [panY, setPanY] = useState(0)
+            
+            // Calibration
+            const [points, setPoints] = useState([])
+            const [calibrationScale, setCalibrationScale] = useState(null)
+            const [unit, setUnit] = useState('ft')
+            
+            // Buildings & Parkings
+            const [buildings, setBuildings] = useState([])
+            const [parkings, setParkings] = useState([])
+            const [selectedId, setSelectedId] = useState(null)
+            const [selectedType, setSelectedType] = useState(null)
+            const [buildStart, setBuildStart] = useState(null)
+            const [previewEnd, setPreviewEnd] = useState(null)
+            
+            // Roads
+            const [roads, setRoads] = useState([])
+            const [tempRoadPoints, setTempRoadPoints] = useState([])
+            const [roadPreviewPoint, setRoadPreviewPoint] = useState(null)
+            const [roadWidth, setRoadWidth] = useState(30)
+            const [smoothingFactor, setSmoothingFactor] = useState(4)
+            
+            // Green Spaces
+            const [greenSpaces, setGreenSpaces] = useState([])
+            const [tempGreenPoints, setTempGreenPoints] = useState([])
+            const [greenPreviewPoint, setGreenPreviewPoint] = useState(null)
+            
+            // Unified Editing
+            const [editingFeature, setEditingFeature] = useState(null)
+            const [selectedVertexIndex, setSelectedVertexIndex] = useState(null)
+            const [isDraggingVertex, setIsDraggingVertex] = useState(false)
+
+            // Tools
+            const [tool, setTool] = useState('pan')
+            const [isDragging, setIsDragging] = useState(false)
+            const [lastMouseX, setLastMouseX] = useState(0)
+            const [lastMouseY, setLastMouseY] = useState(0)
+            const [lastImgX, setLastImgX] = useState(0)
+            const [lastImgY, setLastImgY] = useState(0)
+            
+            // Rotate state
+            const [rotateStartAngle, setRotateStartAngle] = useState(0)
+            const [rotateStartRotation, setRotateStartRotation] = useState(0)
+            
+            // Calibrate form
+            const [calibDistance, setCalibDistance] = useState('100')
+            const [calibUnit, setCalibUnit] = useState('ft')
+            
+            const snap = useCallback((coord) => {
+                if (!calibrationScale || calibrationScale <= 0) return coord
+                const gridPx = 5 / calibrationScale
+                return Math.round(coord / gridPx) * gridPx
+            }, [calibrationScale])
+            
+            const isPointInRect = useCallback((px, py, rect) => {
+                if (!rect) return false
+                const { centerX, centerY, width, height, rotation = 0 } = rect
+                const dx = px - centerX
+                const dy = py - centerY
+                const rad = -rotation * Math.PI / 180
+                const cos = Math.cos(rad)
+                const sin = Math.sin(rad)
+                const localX = dx * cos - dy * sin
+                const localY = dx * sin + dy * cos
+                return Math.abs(localX) <= width / 2 && Math.abs(localY) <= height / 2
+            }, [])
+            
+            const pointToSegmentDistance = useCallback((px, py, x1, y1, x2, y2) => {
+                const dx = x2 - x1
+                const dy = y2 - y1
+                if (dx === 0 && dy === 0) return Math.hypot(px - x1, py - y1)
+                const t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
+                const clampedT = Math.max(0, Math.min(1, t))
+                const projX = x1 + clampedT * dx
+                const projY = y1 + clampedT * dy
+                return Math.hypot(px - projX, py - projY)
+            }, [])
+            
+            const getImageCoords = useCallback((clientX, clientY) => {
+                const canvas = canvasRef.current
+                if (!canvas || !image) return { x: 0, y: 0 }
+                const rect = canvas.getBoundingClientRect()
+                const canvasX = clientX - rect.left
+                const canvasY = clientY - rect.top
+                const imgX = (canvasX - panX) / zoom
+                const imgY = (canvasY - panY) / zoom
+                return { 
+                    x: Math.max(0, Math.min(imgX, image.width)), 
+                    y: Math.max(0, Math.min(imgY, image.height)) 
+                }
+            }, [image, zoom, panX, panY])
+            
+            const getAngleToMouse = useCallback((centerX, centerY, imgX, imgY) => {
+                return Math.atan2(imgY - centerY, imgX - centerX) * (180 / Math.PI)
+            }, [])
+
+            const getFeatureAtPoint = useCallback((imgX, imgY) => {
+                if (!calibrationScale) return null
+                const tolerance = 20 / zoom
+                
+                for (let road of roads) {
+                    for (let i = 0; i < road.points.length - 1; i++) {
+                        const p1 = road.points[i]
+                        const p2 = road.points[i + 1]
+                        const dist = pointToSegmentDistance(imgX, imgY, p1.x, p1.y, p2.x, p2.y)
+                        if (dist < tolerance) return { type: 'road', id: road.id }
+                    }
+                }
+                
+                for (let green of greenSpaces) {
+                    const n = green.points.length
+                    for (let i = 0; i < n; i++) {
+                        const p1 = green.points[i]
+                        const p2 = green.points[(i + 1) % n]
+                        const dist = pointToSegmentDistance(imgX, imgY, p1.x, p1.y, p2.x, p2.y)
+                        if (dist < tolerance) return { type: 'green', id: green.id }
+                    }
+                }
+                return null
+            }, [roads, greenSpaces, zoom, calibrationScale, pointToSegmentDistance])
+            
+            const getClosestVertex = useCallback((featureType, featureId, imgX, imgY) => {
+                if (!featureType || !featureId) return -1
+                let feature = featureType === 'road' 
+                    ? roads.find(r => r.id === featureId)
+                    : greenSpaces.find(g => g.id === featureId)
+                if (!feature) return -1
+                
+                let closestIndex = -1
+                let minDist = Infinity
+                const tolerance = 25 / zoom
+                feature.points.forEach((p, i) => {
+                    const dist = Math.hypot(p.x - imgX, p.y - imgY)
+                    if (dist < minDist && dist < tolerance) {
+                        minDist = dist
+                        closestIndex = i
+                    }
+                })
+                return closestIndex
+            }, [roads, greenSpaces, zoom])
+
+            const drawSmoothRoad = useCallback((ctx, screenPoints, lineWidth, strokeStyle, dash = null) => {
+                if (screenPoints.length < 1) return
+                ctx.save()
+                ctx.strokeStyle = strokeStyle
+                ctx.lineWidth = lineWidth
+                ctx.lineCap = 'round'
+                ctx.lineJoin = 'round'
+                if (dash) ctx.setLineDash(dash)
+                
+                ctx.beginPath()
+                ctx.moveTo(screenPoints[0].x, screenPoints[0].y)
+                
+                if (screenPoints.length === 1) {
+                    ctx.arc(screenPoints[0].x, screenPoints[0].y, lineWidth/2, 0, Math.PI*2)
+                } else if (screenPoints.length === 2) {
+                    ctx.lineTo(screenPoints[1].x, screenPoints[1].y)
+                } else {
+                    const factor = Math.min(0.8, smoothingFactor * 0.12)
+                    for (let i = 1; i < screenPoints.length; i++) {
+                        const prev = screenPoints[i-1]
+                        const curr = screenPoints[i]
+                        const prev2 = screenPoints[i-2] || prev
+                        const next = screenPoints[i+1] || curr
+                        const cp1x = prev.x + (curr.x - prev2.x) * factor
+                        const cp1y = prev.y + (curr.y - prev2.y) * factor
+                        const cp2x = curr.x + (prev.x - next.x) * factor
+                        const cp2y = curr.y + (prev.y - next.y) * factor
+                        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, curr.x, curr.y)
+                    }
+                }
+                ctx.stroke()
+                ctx.restore()
+            }, [smoothingFactor])
+
+            const drawGreenSpace = useCallback((ctx, screenPoints) => {
+                if (screenPoints.length < 3) return
+                ctx.save()
+                ctx.fillStyle = '#4ade80'      // Solid green
+                ctx.strokeStyle = '#22c55e'
+                ctx.lineWidth = 4
+                ctx.beginPath()
+                ctx.moveTo(screenPoints[0].x, screenPoints[0].y)
+                for (let i = 1; i < screenPoints.length; i++) {
+                    ctx.lineTo(screenPoints[i].x, screenPoints[i].y)
+                }
+                ctx.closePath()
+                ctx.fill()
+                ctx.stroke()
+                ctx.restore()
+            }, [])
+
+            // Main draw function
+            const draw = useCallback(() => {
+                const canvas = canvasRef.current
+                if (!canvas || !image) return
+                const ctx = canvas.getContext('2d')
+                ctx.clearRect(0, 0, canvas.width, canvas.height)
+                
+                ctx.drawImage(image, panX, panY, image.width * zoom, image.height * zoom)
+                
+                // Buildings with solid gradient fill + text above
+                buildings.forEach(building => {
+                    const { id, centerX, centerY, width, height, rotation = 0 } = building
+                    const screenCX = panX + centerX * zoom
+                    const screenCY = panY + centerY * zoom
+                    const halfW = (width * zoom) / 2
+                    const halfH = (height * zoom) / 2
+                    
+                    ctx.save()
+                    ctx.translate(screenCX, screenCY)
+                    ctx.rotate(rotation * Math.PI / 180)
+                    
+                    // Yellow to Orange gradient fill
+                    const gradient = ctx.createLinearGradient(-halfW, -halfH, halfW, halfH)
+                    gradient.addColorStop(0, '#fbbf24')  // bright yellow-orange
+                    gradient.addColorStop(1, '#f97316')  // deep orange
+                    
+                    ctx.fillStyle = gradient
+                    ctx.fillRect(-halfW, -halfH, width * zoom, height * zoom)
+                    
+                    // Outline
+                    ctx.strokeStyle = (id === selectedId && selectedType === 'building') ? '#eab308' : '#ca8a04'
+                    ctx.lineWidth = 4
+                    ctx.shadowBlur = 8
+                    ctx.shadowColor = 'rgba(0,0,0,0.5)'
+                    ctx.strokeRect(-halfW, -halfH, width * zoom, height * zoom)
+                    ctx.restore()
+                    
+                    // Text above the building (PROPOSED BUILDING + size)
+                    if (calibrationScale) {
+                        const realW = (width * calibrationScale).toFixed(0)
+                        const realH = (height * calibrationScale).toFixed(0)
+                        ctx.save()
+                        ctx.fillStyle = '#111827'
+                        ctx.strokeStyle = '#ffffff'
+                        ctx.lineWidth = 4
+                        ctx.font = 'bold 13px Inter'
+                        ctx.textAlign = 'center'
+                        ctx.textBaseline = 'middle'
+                        
+                        const label1 = 'PROPOSED BUILDING'
+                        const label2 = `${realW}${unit} × ${realH}${unit}`
+                        
+                        const y1 = screenCY - 22
+                        const y2 = screenCY + 6
+                        
+                        ctx.strokeText(label1, screenCX, y1)
+                        ctx.fillText(label1, screenCX, y1)
+                        ctx.strokeText(label2, screenCX, y2)
+                        ctx.fillText(label2, screenCX, y2)
+                        ctx.restore()
+                    }
+                })
+                
+                // Parkings (unchanged)
+                parkings.forEach(parking => {
+                    const { id, centerX, centerY, width, height, rotation = 0 } = parking
+                    const screenCX = panX + centerX * zoom
+                    const screenCY = panY + centerY * zoom
+                    
+                    ctx.save()
+                    ctx.translate(screenCX, screenCY)
+                    ctx.rotate(rotation * Math.PI / 180)
+                    ctx.fillStyle = '#475569'
+                    ctx.fillRect(-width/2 * zoom, -height/2 * zoom, width * zoom, height * zoom)
+                    ctx.strokeStyle = (id === selectedId && selectedType === 'parking') ? '#eab308' : '#334155'
+                    ctx.lineWidth = 4
+                    ctx.shadowBlur = 10
+                    ctx.beginPath()
+                    ctx.rect(-width/2 * zoom, -height/2 * zoom, width * zoom, height * zoom)
+                    ctx.stroke()
+                    ctx.restore()
+                    
+                    if (calibrationScale) {
+                        const ftToPx = 1 / calibrationScale
+                        const spotWpx = 9 * ftToPx
+                        const spotDpx = 20 * ftToPx
+                        const aislePx = 20 * ftToPx
+                        
+                        let rowLenPx = width
+                        let stackLenPx = height
+                        let swapped = false
+                        if (height > width) {
+                            rowLenPx = height
+                            stackLenPx = width
+                            swapped = true
+                        }
+                        
+                        const numSpots = Math.max(0, Math.floor(rowLenPx / spotWpx))
+                        const startOffset = (rowLenPx - numSpots * spotWpx) / 2
+                        
+                        let cur = -stackLenPx / 2
+                        const rowStackPos = []
+                        while (cur + spotDpx <= stackLenPx / 2) {
+                            rowStackPos.push(cur + spotDpx / 2)
+                            cur += spotDpx
+                            if (cur + aislePx + spotDpx <= stackLenPx / 2) cur += aislePx
+                            else break
+                        }
+                        
+                        ctx.save()
+                        ctx.translate(screenCX, screenCY)
+                        ctx.rotate(rotation * Math.PI / 180)
+                        ctx.strokeStyle = '#fefce8'
+                        ctx.lineWidth = 3
+                        
+                        rowStackPos.forEach(rowStack => {
+                            for (let i = 0; i <= numSpots; i++) {
+                                const lineCoord = -rowLenPx / 2 + startOffset + i * spotWpx
+                                ctx.beginPath()
+                                if (!swapped) {
+                                    ctx.moveTo(lineCoord * zoom, (rowStack - spotDpx / 2) * zoom)
+                                    ctx.lineTo(lineCoord * zoom, (rowStack + spotDpx / 2) * zoom)
+                                } else {
+                                    ctx.moveTo((rowStack - spotDpx / 2) * zoom, lineCoord * zoom)
+                                    ctx.lineTo((rowStack + spotDpx / 2) * zoom, lineCoord * zoom)
+                                }
+                                ctx.stroke()
+                            }
+                        })
+                        ctx.restore()
+                    }
+                })
+                
+                // Preview for build/parking
+                if ((tool === 'build' || tool === 'parking') && buildStart && previewEnd) {
+                    const sx = Math.min(buildStart.x, previewEnd.x)
+                    const sy = Math.min(buildStart.y, previewEnd.y)
+                    const pw = Math.abs(previewEnd.x - buildStart.x)
+                    const ph = Math.abs(previewEnd.y - buildStart.y)
+                    const screenSX = panX + sx * zoom
+                    const screenSY = panY + sy * zoom
+                    
+                    ctx.save()
+                    if (tool === 'parking') {
+                        ctx.globalAlpha = 0.35
+                        ctx.fillStyle = '#475569'
+                        ctx.fillRect(screenSX, screenSY, pw * zoom, ph * zoom)
+                        ctx.globalAlpha = 1
+                    }
+                    ctx.strokeStyle = tool === 'parking' ? '#475569' : '#a3e635'
+                    ctx.lineWidth = 3.5
+                    ctx.setLineDash([8, 5])
+                    ctx.beginPath()
+                    ctx.rect(screenSX, screenSY, pw * zoom, ph * zoom)
+                    ctx.stroke()
+                    ctx.setLineDash([])
+                    ctx.restore()
+                    
+                    if (calibrationScale && pw > 5 && ph > 5) {
+                        const realW = (pw * calibrationScale).toFixed(0)
+                        const realH = (ph * calibrationScale).toFixed(0)
+                        const labelX = screenSX + (pw * zoom) / 2
+                        const labelY = screenSY + (ph * zoom) / 2
+                        ctx.save()
+                        ctx.fillStyle = tool === 'parking' ? '#475569' : '#a3e635'
+                        ctx.strokeStyle = '#fff'
+                        ctx.lineWidth = 3
+                        ctx.font = 'bold 16px Inter'
+                        ctx.textAlign = 'center'
+                        ctx.textBaseline = 'middle'
+                        const label = `${realW}${unit} × ${realH}${unit}`
+                        ctx.strokeText(label, labelX, labelY)
+                        ctx.fillText(label, labelX, labelY)
+                        ctx.restore()
+                    }
+                }
+                
+                // Roads
+                roads.forEach(road => {
+                    if (!calibrationScale) return
+                    const isEditing = editingFeature?.type === 'road' && editingFeature.id === road.id
+                    const screenPoints = road.points.map(p => ({
+                        x: panX + p.x * zoom,
+                        y: panY + p.y * zoom
+                    }))
+                    const pxWidth = (road.width / calibrationScale) * zoom
+                    
+                    drawSmoothRoad(ctx, screenPoints, pxWidth, isEditing ? '#f59e0b' : '#475569')
+                    drawSmoothRoad(ctx, screenPoints, 3, '#fefce8', [12, 8])
+
+                    if (isEditing) {
+                        ctx.save()
+                        road.points.forEach((p, i) => {
+                            const sx = panX + p.x * zoom
+                            const sy = panY + p.y * zoom
+                            const isSelected = i === selectedVertexIndex
+                            ctx.fillStyle = isSelected ? '#eab308' : '#22c55e'
+                            ctx.strokeStyle = '#fff'
+                            ctx.lineWidth = 3
+                            ctx.beginPath()
+                            ctx.arc(sx, sy, isSelected ? 9 : 6, 0, Math.PI * 2)
+                            ctx.fill()
+                            ctx.stroke()
+                            if (isSelected) {
+                                ctx.fillStyle = '#000'
+                                ctx.font = 'bold 11px Inter'
+                                ctx.textAlign = 'center'
+                                ctx.textBaseline = 'middle'
+                                ctx.fillText((i + 1).toString(), sx, sy)
+                            }
+                        })
+                        ctx.restore()
+                    }
+                })
+                
+                // Green Spaces - Solid fill
+                greenSpaces.forEach(green => {
+                    const isEditing = editingFeature?.type === 'green' && editingFeature.id === green.id
+                    const screenPoints = green.points.map(p => ({
+                        x: panX + p.x * zoom,
+                        y: panY + p.y * zoom
+                    }))
+                    drawGreenSpace(ctx, screenPoints)
+                    
+                    if (isEditing) {
+                        ctx.save()
+                        green.points.forEach((p, i) => {
+                            const sx = panX + p.x * zoom
+                            const sy = panY + p.y * zoom
+                            const isSelected = i === selectedVertexIndex
+                            ctx.fillStyle = isSelected ? '#eab308' : '#22c55e'
+                            ctx.strokeStyle = '#fff'
+                            ctx.lineWidth = 3
+                            ctx.beginPath()
+                            ctx.arc(sx, sy, isSelected ? 9 : 6, 0, Math.PI * 2)
+                            ctx.fill()
+                            ctx.stroke()
+                            if (isSelected) {
+                                ctx.fillStyle = '#000'
+                                ctx.font = 'bold 11px Inter'
+                                ctx.textAlign = 'center'
+                                ctx.textBaseline = 'middle'
+                                ctx.fillText((i + 1).toString(), sx, sy)
+                            }
+                        })
+                        ctx.restore()
+                    }
+                })
+                
+                // Road preview
+                if (tool === 'road' && tempRoadPoints.length > 0 && roadPreviewPoint) {
+                    if (!calibrationScale) return
+                    const tempScreen = tempRoadPoints.map(p => ({
+                        x: panX + p.x * zoom,
+                        y: panY + p.y * zoom
+                    }))
+                    const previewScreen = {
+                        x: panX + roadPreviewPoint.x * zoom,
+                        y: panY + roadPreviewPoint.y * zoom
+                    }
+                    const pxWidth = (roadWidth / calibrationScale) * zoom
+                    
+                    drawSmoothRoad(ctx, [...tempScreen, previewScreen], pxWidth, '#64748b', [6, 4])
+                    drawSmoothRoad(ctx, [...tempScreen, previewScreen], 2.5, '#facc15', [12, 8])
+                }
+                
+                // Green preview
+                if (tool === 'green' && tempGreenPoints.length > 0 && greenPreviewPoint) {
+                    if (!calibrationScale) return
+                    const tempScreen = tempGreenPoints.map(p => ({
+                        x: panX + p.x * zoom,
+                        y: panY + p.y * zoom
+                    }))
+                    const previewScreen = {
+                        x: panX + greenPreviewPoint.x * zoom,
+                        y: panY + greenPreviewPoint.y * zoom
+                    }
+                    ctx.save()
+                    ctx.strokeStyle = '#22c55e'
+                    ctx.lineWidth = 3
+                    ctx.setLineDash([8, 5])
+                    ctx.beginPath()
+                    ctx.moveTo(tempScreen[0].x, tempScreen[0].y)
+                    for (let i = 1; i < tempScreen.length; i++) {
+                        ctx.lineTo(tempScreen[i].x, tempScreen[i].y)
+                    }
+                    ctx.lineTo(previewScreen.x, previewScreen.y)
+                    ctx.stroke()
+                    
+                    if (tempGreenPoints.length >= 2) {
+                        ctx.setLineDash([4, 4])
+                        ctx.beginPath()
+                        ctx.moveTo(previewScreen.x, previewScreen.y)
+                        ctx.lineTo(tempScreen[0].x, tempScreen[0].y)
+                        ctx.stroke()
+                    }
+                    ctx.setLineDash([])
+                    ctx.restore()
+                }
+                
+                // Calibration points
+                if (points.length > 0) {
+                    ctx.save()
+                    points.forEach((p, i) => {
+                        const sx = panX + p.x * zoom
+                        const sy = panY + p.y * zoom
+                        ctx.fillStyle = i === 0 ? '#22c55e' : '#ef4444'
+                        ctx.strokeStyle = '#fff'
+                        ctx.lineWidth = 3
+                        ctx.beginPath()
+                        ctx.arc(sx, sy, 10, 0, Math.PI * 2)
+                        ctx.fill()
+                        ctx.stroke()
+                        ctx.fillStyle = '#fff'
+                        ctx.font = 'bold 14px Inter'
+                        ctx.textAlign = 'center'
+                        ctx.fillText((i + 1).toString(), sx, sy + 4)
+                    })
+                    if (points.length === 2) {
+                        ctx.strokeStyle = '#64748b'
+                        ctx.lineWidth = 4
+                        ctx.setLineDash([8, 4])
+                        ctx.beginPath()
+                        ctx.moveTo(panX + points[0].x * zoom, panY + points[0].y * zoom)
+                        ctx.lineTo(panX + points[1].x * zoom, panY + points[1].y * zoom)
+                        ctx.stroke()
+                        ctx.setLineDash([])
+                    }
+                    ctx.restore()
+                }
+            }, [image, zoom, panX, panY, buildings, parkings, selectedId, selectedType, tool, buildStart, previewEnd, roads, greenSpaces, tempRoadPoints, roadPreviewPoint, tempGreenPoints, greenPreviewPoint, roadWidth, smoothingFactor, editingFeature, selectedVertexIndex, drawSmoothRoad, drawGreenSpace, points, calibrationScale, unit])
+            
+            useEffect(() => { draw() }, [draw])
+            
+            useEffect(() => {
+                if (tool !== 'edit') {
+                    setEditingFeature(null)
+                    setSelectedVertexIndex(null)
+                    setIsDraggingVertex(false)
+                }
+            }, [tool])
+            
+            // Resize canvas
+            useEffect(() => {
+                const canvas = canvasRef.current
+                if (!canvas) return
+                const container = canvas.parentElement
+                canvas.width = container.clientWidth
+                canvas.height = container.clientHeight
+                if (image) draw()
+            }, [image, draw])
+            
+            // Upload
+            const handleUpload = (e) => {
+                const file = e.target.files[0]
+                if (!file) return
+                const reader = new FileReader()
+                reader.onload = (ev) => {
+                    const img = new Image()
+                    img.onload = () => {
+                        setImage(img)
+                        setBuildings([])
+                        setParkings([])
+                        setSelectedId(null)
+                        setSelectedType(null)
+                        setBuildStart(null)
+                        setPreviewEnd(null)
+                        setRoads([])
+                        setTempRoadPoints([])
+                        setRoadPreviewPoint(null)
+                        setGreenSpaces([])
+                        setTempGreenPoints([])
+                        setGreenPreviewPoint(null)
+                        setPoints([])
+                        setCalibrationScale(null)
+                        setEditingFeature(null)
+                        setSelectedVertexIndex(null)
+                        
+                        const canvas = canvasRef.current
+                        const scaleX = canvas.width / img.width * 0.95
+                        const scaleY = canvas.height / img.height * 0.95
+                        const fitZoom = Math.min(scaleX, scaleY)
+                        setZoom(fitZoom)
+                        setPanX((canvas.width - img.width * fitZoom) / 2)
+                        setPanY((canvas.height - img.height * fitZoom) / 2)
+                    }
+                    img.src = ev.target.result
+                }
+                reader.readAsDataURL(file)
+            }
+            
+            const handleMouseDown = (e) => {
+                if (!image) return
+                const rect = canvasRef.current.getBoundingClientRect()
+                const mx = e.clientX - rect.left
+                const my = e.clientY - rect.top
+                setLastMouseX(mx)
+                setLastMouseY(my)
+                
+                const imgCoord = getImageCoords(e.clientX, e.clientY)
+                const snappedCoord = calibrationScale ? { x: snap(imgCoord.x), y: snap(imgCoord.y) } : imgCoord
+                
+                setLastImgX(imgCoord.x)
+                setLastImgY(imgCoord.y)
+                
+                if (tool === 'pan') {
+                    setIsDragging(true)
+                    canvasRef.current.style.cursor = 'grabbing'
+                }
+                else if (tool === 'edit' && calibrationScale) {
+                    if (editingFeature) {
+                        const vertexIndex = getClosestVertex(editingFeature.type, editingFeature.id, imgCoord.x, imgCoord.y)
+                        if (vertexIndex !== -1) {
+                            setSelectedVertexIndex(vertexIndex)
+                            setIsDraggingVertex(true)
+                            return
+                        }
+                    }
+                    const hit = getFeatureAtPoint(imgCoord.x, imgCoord.y)
+                    if (hit) {
+                        setEditingFeature(hit)
+                        setSelectedVertexIndex(null)
+                        setSelectedId(null)
+                        setSelectedType(null)
+                    } else {
+                        setEditingFeature(null)
+                        setSelectedVertexIndex(null)
+                    }
+                }
+                else if (tool === 'build' || tool === 'parking') {
+                    if (!buildStart) {
+                        setBuildStart(snappedCoord)
+                        setPreviewEnd(snappedCoord)
+                    }
+                }
+                else if (tool === 'move' || tool === 'rotate') {
+                    let hitId = null
+                    let hitType = null
+                    
+                    for (let b of buildings) {
+                        if (isPointInRect(imgCoord.x, imgCoord.y, b)) {
+                            hitId = b.id
+                            hitType = 'building'
+                            break
+                        }
+                    }
+                    if (!hitId) {
+                        for (let p of parkings) {
+                            if (isPointInRect(imgCoord.x, imgCoord.y, p)) {
+                                hitId = p.id
+                                hitType = 'parking'
+                                break
+                            }
+                        }
+                    }
+                    
+                    if (hitId) {
+                        setSelectedId(hitId)
+                        setSelectedType(hitType)
+                        setIsDragging(true)
+                        if (tool === 'rotate') {
+                            const hitObj = hitType === 'building' 
+                                ? buildings.find(b => b.id === hitId)
+                                : parkings.find(p => p.id === hitId)
+                            const currentAngle = getAngleToMouse(hitObj.centerX, hitObj.centerY, imgCoord.x, imgCoord.y)
+                            setRotateStartAngle(currentAngle)
+                            setRotateStartRotation(hitObj.rotation || 0)
+                        }
+                    } else {
+                        setSelectedId(null)
+                        setSelectedType(null)
+                    }
+                }
+                else if (tool === 'road') {
+                    setTempRoadPoints(prev => [...prev, imgCoord])
+                }
+                else if (tool === 'green') {
+                    setTempGreenPoints(prev => [...prev, imgCoord])
+                }
+                else if (tool === 'delete') {
+                    let deleted = false
+                    
+                    setBuildings(prev => {
+                        const filtered = prev.filter(b => {
+                            if (isPointInRect(imgCoord.x, imgCoord.y, b)) {
+                                deleted = true
+                                return false
+                            }
+                            return true
+                        })
+                        return filtered
+                    })
+                    if (deleted) return
+                    
+                    setParkings(prev => {
+                        const filtered = prev.filter(p => {
+                            if (isPointInRect(imgCoord.x, imgCoord.y, p)) {
+                                deleted = true
+                                return false
+                            }
+                            return true
+                        })
+                        return filtered
+                    })
+                    if (deleted) return
+                    
+                    setRoads(prev => prev.filter(road => {
+                        let minDist = Infinity
+                        for (let i = 0; i < road.points.length - 1; i++) {
+                            const p1 = road.points[i]
+                            const p2 = road.points[i + 1]
+                            const dist = pointToSegmentDistance(imgCoord.x, imgCoord.y, p1.x, p1.y, p2.x, p2.y)
+                            minDist = Math.min(minDist, dist)
+                        }
+                        if (minDist < 15 / zoom) {
+                            deleted = true
+                            return false
+                        }
+                        return true
+                    }))
+                    if (deleted) return
+                    
+                    setGreenSpaces(prev => prev.filter(green => {
+                        let minDist = Infinity
+                        const n = green.points.length
+                        for (let i = 0; i < n; i++) {
+                            const p1 = green.points[i]
+                            const p2 = green.points[(i + 1) % n]
+                            const dist = pointToSegmentDistance(imgCoord.x, imgCoord.y, p1.x, p1.y, p2.x, p2.y)
+                            minDist = Math.min(minDist, dist)
+                        }
+                        if (minDist < 15 / zoom) {
+                            deleted = true
+                            return false
+                        }
+                        return true
+                    }))
+                }
+                else if (tool === 'calibrate') {
+                    setPoints(prev => {
+                        let np = [...prev, imgCoord]
+                        if (np.length > 2) np = [imgCoord]
+                        return np
+                    })
+                }
+            }
+            
+            const handleMouseMove = (e) => {
+                if (!image) return
+                const imgCoord = getImageCoords(e.clientX, e.clientY)
+                
+                if (tool === 'edit' && isDraggingVertex && editingFeature && selectedVertexIndex !== null) {
+                    const newCoord = calibrationScale ? { x: snap(imgCoord.x), y: snap(imgCoord.y) } : imgCoord
+                    if (editingFeature.type === 'road') {
+                        setRoads(prev => prev.map(road => {
+                            if (road.id !== editingFeature.id) return road
+                            const newPoints = [...road.points]
+                            newPoints[selectedVertexIndex] = newCoord
+                            return { ...road, points: newPoints }
+                        }))
+                    } else if (editingFeature.type === 'green') {
+                        setGreenSpaces(prev => prev.map(green => {
+                            if (green.id !== editingFeature.id) return green
+                            const newPoints = [...green.points]
+                            newPoints[selectedVertexIndex] = newCoord
+                            return { ...green, points: newPoints }
+                        }))
+                    }
+                    return
+                }
+                
+                if (tool === 'road' && tempRoadPoints.length > 0) setRoadPreviewPoint(imgCoord)
+                if (tool === 'green' && tempGreenPoints.length > 0) setGreenPreviewPoint(imgCoord)
+                
+                if (tool === 'pan' && isDragging) {
+                    const rect = canvasRef.current.getBoundingClientRect()
+                    const mx = e.clientX - rect.left
+                    const my = e.clientY - rect.top
+                    const dx = mx - lastMouseX
+                    const dy = my - lastMouseY
+                    setPanX(p => p + dx)
+                    setPanY(p => p + dy)
+                    setLastMouseX(mx)
+                    setLastMouseY(my)
+                }
+                else if ((tool === 'build' || tool === 'parking') && buildStart) {
+                    const snapped = calibrationScale ? { x: snap(imgCoord.x), y: snap(imgCoord.y) } : imgCoord
+                    setPreviewEnd(snapped)
+                }
+                else if (tool === 'move' && isDragging && selectedId !== null) {
+                    const dx = imgCoord.x - lastImgX
+                    const dy = imgCoord.y - lastImgY
+                    if (selectedType === 'building') {
+                        setBuildings(prev => prev.map(b => b.id === selectedId ? { ...b, centerX: b.centerX + dx, centerY: b.centerY + dy } : b))
+                    } else if (selectedType === 'parking') {
+                        setParkings(prev => prev.map(p => p.id === selectedId ? { ...p, centerX: p.centerX + dx, centerY: p.centerY + dy } : p))
+                    }
+                    setLastImgX(imgCoord.x)
+                    setLastImgY(imgCoord.y)
+                }
+                else if (tool === 'rotate' && isDragging && selectedId !== null) {
+                    if (selectedType === 'building') {
+                        setBuildings(prev => prev.map(b => {
+                            if (b.id !== selectedId) return b
+                            const currentAngle = getAngleToMouse(b.centerX, b.centerY, imgCoord.x, imgCoord.y)
+                            const delta = currentAngle - rotateStartAngle
+                            return { ...b, rotation: rotateStartRotation + delta }
+                        }))
+                    } else if (selectedType === 'parking') {
+                        setParkings(prev => prev.map(p => {
+                            if (p.id !== selectedId) return p
+                            const currentAngle = getAngleToMouse(p.centerX, p.centerY, imgCoord.x, imgCoord.y)
+                            const delta = currentAngle - rotateStartAngle
+                            return { ...p, rotation: rotateStartRotation + delta }
+                        }))
+                    }
+                }
+            }
+            
+            const handleMouseUp = (e) => {
+                if (!image) return
+                setIsDragging(false)
+                setIsDraggingVertex(false)
+                
+                const imgCoord = getImageCoords(e.clientX, e.clientY)
+                const snappedCoord = calibrationScale ? { x: snap(imgCoord.x), y: snap(imgCoord.y) } : imgCoord
+                
+                if ((tool === 'build' || tool === 'parking') && buildStart) {
+                    const end = previewEnd || snappedCoord
+                    const dist = Math.hypot(end.x - buildStart.x, end.y - buildStart.y)
+                    if (dist > 20) {
+                        const minX = Math.min(buildStart.x, end.x)
+                        const minY = Math.min(buildStart.y, end.y)
+                        const w = Math.abs(end.x - buildStart.x)
+                        const h = Math.abs(end.y - buildStart.y)
+                        const centerX = minX + w / 2
+                        const centerY = minY + h / 2
+                        
+                        if (tool === 'build') {
+                            setBuildings(prev => [...prev, { id: Date.now(), centerX, centerY, width: w, height: h, rotation: 0 }])
+                        } else {
+                            setParkings(prev => [...prev, { id: Date.now(), centerX, centerY, width: w, height: h, rotation: 0 }])
+                        }
+                    }
+                    setBuildStart(null)
+                    setPreviewEnd(null)
+                }
+                
+                const canvas = canvasRef.current
+                if (canvas) {
+                    if (tool === 'pan') canvas.style.cursor = 'grab'
+                    else if (tool === 'build' || tool === 'parking' || tool === 'calibrate' || tool === 'road' || tool === 'green') canvas.style.cursor = 'crosshair'
+                    else if (tool === 'move') canvas.style.cursor = 'move'
+                    else if (tool === 'rotate') canvas.style.cursor = 'pointer'
+                    else if (tool === 'delete') canvas.style.cursor = 'crosshair'
+                    else if (tool === 'edit') canvas.style.cursor = 'pointer'
+                    else canvas.style.cursor = 'default'
+                }
+            }
+            
+            const handleContextMenu = (e) => {
+                e.preventDefault()
+                if (tool !== 'edit' || !editingFeature || selectedVertexIndex === null) return
+                
+                const minPoints = editingFeature.type === 'road' ? 2 : 3
+                if (editingFeature.type === 'road') {
+                    setRoads(prev => prev.map(road => {
+                        if (road.id !== editingFeature.id || road.points.length <= minPoints) return road
+                        const newPoints = road.points.filter((_, i) => i !== selectedVertexIndex)
+                        return { ...road, points: newPoints }
+                    }))
+                } else {
+                    setGreenSpaces(prev => prev.map(green => {
+                        if (green.id !== editingFeature.id || green.points.length <= minPoints) return green
+                        const newPoints = green.points.filter((_, i) => i !== selectedVertexIndex)
+                        return { ...green, points: newPoints }
+                    }))
+                }
+                setSelectedVertexIndex(null)
+            }
+            
+            const finishRoad = () => {
+                if (tempRoadPoints.length < 2) return
+                setRoads(prev => [...prev, { id: Date.now(), points: [...tempRoadPoints], width: roadWidth }])
+                setTempRoadPoints([])
+                setRoadPreviewPoint(null)
+            }
+            
+            const finishGreenSpace = () => {
+                if (tempGreenPoints.length < 3) return
+                setGreenSpaces(prev => [...prev, { id: Date.now(), points: [...tempGreenPoints] }])
+                setTempGreenPoints([])
+                setGreenPreviewPoint(null)
+            }
+            
+            const applyCalibration = () => {
+                if (points.length !== 2) return
+                const dx = points[1].x - points[0].x
+                const dy = points[1].y - points[0].y
+                const pixelDist = Math.hypot(dx, dy)
+                const realDist = parseFloat(calibDistance)
+                if (!realDist || pixelDist < 1) return
+                const scale = realDist / pixelDist
+                setCalibrationScale(scale)
+                setUnit(calibUnit)
+            }
+            
+            const zoomAtCenter = (factor) => {
+                if (!image || !canvasRef.current) return
+                const canvas = canvasRef.current
+                const centerX = canvas.width / 2
+                const centerY = canvas.height / 2
+                const imgCX = (centerX - panX) / zoom
+                const imgCY = (centerY - panY) / zoom
+                const newZoom = Math.max(0.1, zoom * factor)
+                setZoom(newZoom)
+                setPanX(centerX - imgCX * newZoom)
+                setPanY(centerY - imgCY * newZoom)
+            }
+            
+            const resetView = () => {
+                if (!image || !canvasRef.current) return
+                const canvas = canvasRef.current
+                const scaleX = canvas.width / image.width * 0.95
+                const scaleY = canvas.height / image.height * 0.95
+                const fitZoom = Math.min(scaleX, scaleY)
+                setZoom(fitZoom)
+                setPanX((canvas.width - image.width * fitZoom) / 2)
+                setPanY((canvas.height - image.height * fitZoom) / 2)
+            }
+            
+            useEffect(() => {
+                const handleKey = (e) => {
+                    if (e.key === '+' || e.key === '=') zoomAtCenter(1.2)
+                    if (e.key === '-') zoomAtCenter(0.8)
+                    if (e.key === 'r' || e.key === 'R') resetView()
+                    if (e.key === 'Escape') {
+                        setBuildStart(null); setPreviewEnd(null)
+                        setTempRoadPoints([]); setRoadPreviewPoint(null)
+                        setTempGreenPoints([]); setGreenPreviewPoint(null)
+                        setSelectedId(null); setSelectedType(null)
+                        setEditingFeature(null)
+                        setSelectedVertexIndex(null)
+                    }
+                    if ((e.key === 'Enter' || e.key === ' ') && tool === 'road') finishRoad()
+                    if ((e.key === 'Enter' || e.key === ' ') && tool === 'green') finishGreenSpace()
+                }
+                window.addEventListener('keydown', handleKey)
+                return () => window.removeEventListener('keydown', handleKey)
+            }, [zoomAtCenter, resetView, tool, finishRoad, finishGreenSpace])
+            
+            useEffect(() => {
+                const canvas = canvasRef.current
+                if (!canvas) return
+                const prevent = (e) => e.preventDefault()
+                canvas.addEventListener('wheel', prevent, { passive: false })
+                return () => canvas.removeEventListener('wheel', prevent)
+            }, [])
+            
+            useEffect(() => {
+                const canvas = canvasRef.current
+                if (!canvas) return
+                if (tool === 'pan') canvas.style.cursor = 'grab'
+                else if (tool === 'build' || tool === 'parking' || tool === 'calibrate' || tool === 'road' || tool === 'green') canvas.style.cursor = 'crosshair'
+                else if (tool === 'move') canvas.style.cursor = 'move'
+                else if (tool === 'rotate') canvas.style.cursor = 'pointer'
+                else if (tool === 'delete') canvas.style.cursor = 'crosshair'
+                else if (tool === 'edit') canvas.style.cursor = 'pointer'
+                else canvas.style.cursor = 'default'
+            }, [tool])
+            
+            return createElement('div', { className: 'app' },
+                createElement('div', { className: 'toolbar' },
+                    createElement('button', { className: 'btn', onClick: () => fileInputRef.current.click() }, '📤 Upload EC Plan'),
+                    createElement('input', { ref: fileInputRef, type: 'file', accept: 'image/*', onChange: handleUpload, style: { display: 'none' } }),
+                    
+                    createElement('div', { className: 'btn-group' },
+                        createElement('button', { className: `btn ${tool === 'pan' ? 'active' : ''}`, onClick: () => { setTool('pan'); setBuildStart(null); setPreviewEnd(null); setTempRoadPoints([]); setRoadPreviewPoint(null); setTempGreenPoints([]); setGreenPreviewPoint(null); setSelectedId(null); setSelectedType(null); } }, '🖱️ Pan'),
+                        createElement('button', { className: `btn ${tool === 'build' ? 'active' : ''}`, onClick: () => { setTool('build'); setBuildStart(null); setPreviewEnd(null); setTempRoadPoints([]); setRoadPreviewPoint(null); setTempGreenPoints([]); setGreenPreviewPoint(null); setSelectedId(null); setSelectedType(null); }, disabled: !calibrationScale }, '🏗️ Build'),
+                        createElement('button', { className: `btn ${tool === 'parking' ? 'active' : ''}`, onClick: () => { setTool('parking'); setBuildStart(null); setPreviewEnd(null); setTempRoadPoints([]); setRoadPreviewPoint(null); setTempGreenPoints([]); setGreenPreviewPoint(null); setSelectedId(null); setSelectedType(null); }, disabled: !calibrationScale }, '🅿️ Parking'),
+                        createElement('button', { className: `btn ${tool === 'move' ? 'active' : ''}`, onClick: () => { setTool('move'); setBuildStart(null); setPreviewEnd(null); setTempRoadPoints([]); setRoadPreviewPoint(null); setTempGreenPoints([]); setGreenPreviewPoint(null); setSelectedId(null); setSelectedType(null); }, disabled: !calibrationScale || (buildings.length === 0 && parkings.length === 0) }, '↔️ Move'),
+                        createElement('button', { className: `btn ${tool === 'rotate' ? 'active' : ''}`, onClick: () => { setTool('rotate'); setBuildStart(null); setPreviewEnd(null); setTempRoadPoints([]); setRoadPreviewPoint(null); setTempGreenPoints([]); setGreenPreviewPoint(null); setSelectedId(null); setSelectedType(null); }, disabled: !calibrationScale || (buildings.length === 0 && parkings.length === 0) }, '🔄 Rotate'),
+                        createElement('button', { className: `btn ${tool === 'road' ? 'active' : ''}`, onClick: () => { setTool('road'); setBuildStart(null); setPreviewEnd(null); setTempRoadPoints([]); setRoadPreviewPoint(null); setTempGreenPoints([]); setGreenPreviewPoint(null); setSelectedId(null); setSelectedType(null); }, disabled: !calibrationScale }, '🛣️ Road'),
+                        createElement('button', { 
+                            className: `btn ${tool === 'green' ? 'active' : ''}`, 
+                            onClick: () => { 
+                                setTool('green'); 
+                                setBuildStart(null); setPreviewEnd(null); 
+                                setTempRoadPoints([]); setRoadPreviewPoint(null); 
+                                setTempGreenPoints([]); setGreenPreviewPoint(null); 
+                                setSelectedId(null); setSelectedType(null); 
+                                setEditingFeature(null); 
+                            }, 
+                            disabled: !calibrationScale 
+                        }, '🌳 Green'),
+                        createElement('button', { 
+                            className: `btn ${tool === 'edit' ? 'active' : ''}`, 
+                            onClick: () => { 
+                                setTool('edit'); 
+                                setBuildStart(null); setPreviewEnd(null); 
+                                setTempRoadPoints([]); setRoadPreviewPoint(null); 
+                                setTempGreenPoints([]); setGreenPreviewPoint(null); 
+                                setSelectedId(null); setSelectedType(null); 
+                                setEditingFeature(null); 
+                                setSelectedVertexIndex(null); 
+                            }, 
+                            disabled: !calibrationScale || (roads.length === 0 && greenSpaces.length === 0) 
+                        }, '✏️ Edit'),
+                        createElement('button', { className: `btn ${tool === 'delete' ? 'active' : ''}`, onClick: () => { setTool('delete'); setBuildStart(null); setPreviewEnd(null); setTempRoadPoints([]); setRoadPreviewPoint(null); setTempGreenPoints([]); setGreenPreviewPoint(null); setSelectedId(null); setSelectedType(null); } }, '🗑️ Delete'),
+                        createElement('button', { className: `btn ${tool === 'calibrate' ? 'active' : ''}`, onClick: () => { setTool('calibrate'); setBuildStart(null); setPreviewEnd(null); setTempRoadPoints([]); setRoadPreviewPoint(null); setTempGreenPoints([]); setGreenPreviewPoint(null); setSelectedId(null); setSelectedType(null); } }, '📐 Calibrate')
+                    ),
+                    
+                    createElement('button', { className: 'btn', onClick: () => zoomAtCenter(1.2) }, '🔎 +'),
+                    createElement('button', { className: 'btn', onClick: () => zoomAtCenter(0.8) }, '🔎 –'),
+                    createElement('button', { className: 'btn', onClick: resetView }, '↺ Reset View'),
+                    
+                    tool === 'calibrate' && image && createElement('div', {
+                        style: { display: 'flex', alignItems: 'center', gap: '12px', marginLeft: 'auto', background: '#334155', padding: '6px 12px', borderRadius: '8px' }
+                    },
+                        createElement('span', { style: { fontSize: '13px', whiteSpace: 'nowrap' } }, 'Distance:'),
+                        createElement('input', { type: 'number', value: calibDistance, onChange: (e) => setCalibDistance(e.target.value), style: { width: '80px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#1e2937', color: 'white' } }),
+                        createElement('select', { value: calibUnit, onChange: (e) => setCalibUnit(e.target.value), style: { padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#1e2937', color: 'white' } },
+                            createElement('option', { value: 'ft' }, 'ft'),
+                            createElement('option', { value: 'm' }, 'm')
+                        ),
+                        createElement('button', { className: 'btn', style: { background: points.length === 2 ? '#22c55e' : '#64748b' }, disabled: points.length !== 2, onClick: applyCalibration }, '✅ Apply'),
+                        createElement('button', { className: 'btn', onClick: () => { setPoints([]); setCalibrationScale(null) } }, 'Clear')
+                    ),
+                    
+                    tool === 'road' && createElement('div', {
+                        style: { display: 'flex', alignItems: 'center', gap: '12px', marginLeft: 'auto', background: '#334155', padding: '6px 12px', borderRadius: '8px' }
+                    },
+                        createElement('span', { style: { fontSize: '13px', whiteSpace: 'nowrap' } }, 'Road Width:'),
+                        createElement('input', { 
+                            type: 'number', 
+                            value: roadWidth, 
+                            onChange: (e) => setRoadWidth(isNaN(parseFloat(e.target.value)) ? 30 : parseFloat(e.target.value)), 
+                            min: "0.1",
+                            step: "0.1",
+                            style: { width: '80px', padding: '6px 10px', borderRadius: '6px', border: 'none', background: '#1e2937', color: 'white' } 
+                        }),
+                        createElement('span', { style: { fontSize: '13px' } }, unit),
+                        
+                        createElement('span', { style: { fontSize: '13px', marginLeft: '12px' } }, 'Smoothing:'),
+                        createElement('input', { 
+                            type: 'range', 
+                            min: "0.5", 
+                            max: "8", 
+                            step: "0.1",
+                            value: smoothingFactor, 
+                            onChange: (e) => setSmoothingFactor(parseFloat(e.target.value)),
+                            style: { width: '120px' }
+                        }),
+                        createElement('span', { style: { fontSize: '13px', width: '30px' } }, smoothingFactor.toFixed(1)),
+                        
+                        tempRoadPoints.length >= 2 && createElement('button', { className: 'btn', style: { background: '#22c55e' }, onClick: finishRoad }, '✅ Finish Road'),
+                        createElement('button', { className: 'btn', onClick: () => { setTempRoadPoints([]); setRoadPreviewPoint(null) } }, 'Cancel')
+                    ),
+                    
+                    tool === 'green' && createElement('div', {
+                        style: { display: 'flex', alignItems: 'center', gap: '12px', marginLeft: 'auto', background: '#334155', padding: '6px 12px', borderRadius: '8px' }
+                    },
+                        createElement('span', { style: { fontSize: '13px', whiteSpace: 'nowrap', color: '#22c55e' } }, '🌳 Green Space'),
+                        tempGreenPoints.length >= 3 && createElement('button', { className: 'btn', style: { background: '#22c55e' }, onClick: finishGreenSpace }, '✅ Finish'),
+                        createElement('button', { className: 'btn', onClick: () => { setTempGreenPoints([]); setGreenPreviewPoint(null) } }, 'Cancel')
+                    ),
+                    
+                    (buildings.length > 0 || parkings.length > 0 || roads.length > 0 || greenSpaces.length > 0 || tempRoadPoints.length > 0 || tempGreenPoints.length > 0) && createElement('button', {
+                        className: 'btn',
+                        style: { marginLeft: 'auto', background: '#ef4444' },
+                        onClick: () => { 
+                            setBuildings([]); 
+                            setParkings([]); 
+                            setSelectedId(null); 
+                            setSelectedType(null); 
+                            setRoads([]); 
+                            setTempRoadPoints([]); 
+                            setRoadPreviewPoint(null);
+                            setGreenSpaces([]); 
+                            setTempGreenPoints([]); 
+                            setGreenPreviewPoint(null);
+                            setEditingFeature(null);
+                            setSelectedVertexIndex(null);
+                        }
+                    }, '🗑️ Clear All')
+                ),
+                
+                createElement('div', { className: 'canvas-container' },
+                    createElement('canvas', {
+                        ref: canvasRef,
+                        onMouseDown: handleMouseDown,
+                        onMouseMove: handleMouseMove,
+                        onMouseUp: handleMouseUp,
+                        onMouseLeave: () => { 
+                            setIsDragging(false); 
+                            setBuildStart(null); 
+                            setPreviewEnd(null); 
+                            setRoadPreviewPoint(null);
+                            setGreenPreviewPoint(null);
+                            setIsDraggingVertex(false);
+                        },
+                        onContextMenu: handleContextMenu
+                    })
+                ),
+                
+                createElement('div', { className: 'info-bar' },
+                    createElement('div', {},
+                        image 
+                            ? `Image: ${image.width} × ${image.height}px • Zoom: ${(zoom * 100).toFixed(0)}% • Buildings: ${buildings.length} • Parkings: ${parkings.length} • Roads: ${roads.length} • Greens: ${greenSpaces.length}`
+                            : 'Upload an EC Plan to begin'
+                    ),
+                    createElement('div', { style: { fontWeight: 600, color: calibrationScale ? '#22c55e' : '#f59e0b' } },
+                        !calibrationScale 
+                            ? '⚠️ Calibrate first'
+                            : tool === 'edit'
+                                ? (editingFeature 
+                                    ? `✏️ Editing ${editingFeature.type} • Drag vertices • Right-click to delete`
+                                    : 'Click a road or green space to edit')
+                                : tool === 'road'
+                                    ? `Smoothing: ${smoothingFactor.toFixed(1)} (higher = rounder curves)`
+                                    : tool === 'green'
+                                        ? 'Click vertices → press Enter or click Finish'
+                                        : selectedId 
+                                            ? `✅ ${selectedType} selected`
+                                            : `Calibrated • 1 px = ${calibrationScale.toFixed(4)} ${unit}`
+                    ),
+                    createElement('div', {}, 'Civil Drafting Tool v0.9.1')
+                )
+            )
+        }
+        
+        ReactDOM.render(
+            createElement(CivilDraftingTool),
+            document.getElementById('root')
+        )
+    </script>
+</body>
+</html>
