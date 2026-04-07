@@ -301,60 +301,6 @@
                 
                 ctx.drawImage(image, panX, panY, image.width * zoom, image.height * zoom)
                 
-                // Buildings with solid gradient fill + text above
-                buildings.forEach(building => {
-                    const { id, centerX, centerY, width, height, rotation = 0 } = building
-                    const screenCX = panX + centerX * zoom
-                    const screenCY = panY + centerY * zoom
-                    const halfW = (width * zoom) / 2
-                    const halfH = (height * zoom) / 2
-                    
-                    ctx.save()
-                    ctx.translate(screenCX, screenCY)
-                    ctx.rotate(rotation * Math.PI / 180)
-                    
-                    // Yellow to Orange gradient fill
-                    const gradient = ctx.createLinearGradient(-halfW, -halfH, halfW, halfH)
-                    gradient.addColorStop(0, '#fbbf24')  // bright yellow-orange
-                    gradient.addColorStop(1, '#f97316')  // deep orange
-                    
-                    ctx.fillStyle = gradient
-                    ctx.fillRect(-halfW, -halfH, width * zoom, height * zoom)
-                    
-                    // Outline
-                    ctx.strokeStyle = (id === selectedId && selectedType === 'building') ? '#eab308' : '#ca8a04'
-                    ctx.lineWidth = 4
-                    ctx.shadowBlur = 8
-                    ctx.shadowColor = 'rgba(0,0,0,0.5)'
-                    ctx.strokeRect(-halfW, -halfH, width * zoom, height * zoom)
-                    ctx.restore()
-                    
-                    // Text above the building (PROPOSED BUILDING + size)
-                    if (calibrationScale) {
-                        const realW = (width * calibrationScale).toFixed(0)
-                        const realH = (height * calibrationScale).toFixed(0)
-                        ctx.save()
-                        ctx.fillStyle = '#111827'
-                        ctx.strokeStyle = '#ffffff'
-                        ctx.lineWidth = 4
-                        ctx.font = 'bold 13px Inter'
-                        ctx.textAlign = 'center'
-                        ctx.textBaseline = 'middle'
-                        
-                        const label1 = 'PROPOSED BUILDING'
-                        const label2 = `${realW}${unit} × ${realH}${unit}`
-                        
-                        const y1 = screenCY - 22
-                        const y2 = screenCY + 6
-                        
-                        ctx.strokeText(label1, screenCX, y1)
-                        ctx.fillText(label1, screenCX, y1)
-                        ctx.strokeText(label2, screenCX, y2)
-                        ctx.fillText(label2, screenCX, y2)
-                        ctx.restore()
-                    }
-                })
-                
                 // Parkings (unchanged)
                 parkings.forEach(parking => {
                     const { id, centerX, centerY, width, height, rotation = 0 } = parking
@@ -424,50 +370,6 @@
                         ctx.restore()
                     }
                 })
-                
-                // Preview for build/parking
-                if ((tool === 'build' || tool === 'parking') && buildStart && previewEnd) {
-                    const sx = Math.min(buildStart.x, previewEnd.x)
-                    const sy = Math.min(buildStart.y, previewEnd.y)
-                    const pw = Math.abs(previewEnd.x - buildStart.x)
-                    const ph = Math.abs(previewEnd.y - buildStart.y)
-                    const screenSX = panX + sx * zoom
-                    const screenSY = panY + sy * zoom
-                    
-                    ctx.save()
-                    if (tool === 'parking') {
-                        ctx.globalAlpha = 0.35
-                        ctx.fillStyle = '#475569'
-                        ctx.fillRect(screenSX, screenSY, pw * zoom, ph * zoom)
-                        ctx.globalAlpha = 1
-                    }
-                    ctx.strokeStyle = tool === 'parking' ? '#475569' : '#a3e635'
-                    ctx.lineWidth = 3.5
-                    ctx.setLineDash([8, 5])
-                    ctx.beginPath()
-                    ctx.rect(screenSX, screenSY, pw * zoom, ph * zoom)
-                    ctx.stroke()
-                    ctx.setLineDash([])
-                    ctx.restore()
-                    
-                    if (calibrationScale && pw > 5 && ph > 5) {
-                        const realW = (pw * calibrationScale).toFixed(0)
-                        const realH = (ph * calibrationScale).toFixed(0)
-                        const labelX = screenSX + (pw * zoom) / 2
-                        const labelY = screenSY + (ph * zoom) / 2
-                        ctx.save()
-                        ctx.fillStyle = tool === 'parking' ? '#475569' : '#a3e635'
-                        ctx.strokeStyle = '#fff'
-                        ctx.lineWidth = 3
-                        ctx.font = 'bold 16px Inter'
-                        ctx.textAlign = 'center'
-                        ctx.textBaseline = 'middle'
-                        const label = `${realW}${unit} × ${realH}${unit}`
-                        ctx.strokeText(label, labelX, labelY)
-                        ctx.fillText(label, labelX, labelY)
-                        ctx.restore()
-                    }
-                }
                 
                 // Roads
                 roads.forEach(road => {
@@ -541,6 +443,105 @@
                     }
                 })
                 
+                // Buildings with solid gradient fill + text above
+                buildings.forEach(building => {
+                    const { id, centerX, centerY, width, height, rotation = 0 } = building
+                    const screenCX = panX + centerX * zoom
+                    const screenCY = panY + centerY * zoom
+                    const halfW = (width * zoom) / 2
+                    const halfH = (height * zoom) / 2
+                    
+                    ctx.save()
+                    ctx.translate(screenCX, screenCY)
+                    ctx.rotate(rotation * Math.PI / 180)
+                    
+                    // Yellow to Orange gradient fill
+                    const gradient = ctx.createLinearGradient(-halfW, -halfH, halfW, halfH)
+                    gradient.addColorStop(0, '#fbbf24')  // bright yellow-orange
+                    gradient.addColorStop(1, '#f97316')  // deep orange
+                    
+                    ctx.fillStyle = gradient
+                    ctx.fillRect(-halfW, -halfH, width * zoom, height * zoom)
+                    
+                    // Outline
+                    ctx.strokeStyle = (id === selectedId && selectedType === 'building') ? '#eab308' : '#ca8a04'
+                    ctx.lineWidth = 4
+                    ctx.shadowBlur = 8
+                    ctx.shadowColor = 'rgba(0,0,0,0.5)'
+                    ctx.strokeRect(-halfW, -halfH, width * zoom, height * zoom)
+                    ctx.restore()
+                    
+                    // Text above the building (PROPOSED BUILDING + size)
+                    if (calibrationScale) {
+                        const realW = (width * calibrationScale).toFixed(0)
+                        const realH = (height * calibrationScale).toFixed(0)
+                        ctx.save()
+                        ctx.fillStyle = '#111827'
+                        ctx.strokeStyle = '#ffffff'
+                        ctx.lineWidth = 4
+                        ctx.font = 'bold 13px Inter'
+                        ctx.textAlign = 'center'
+                        ctx.textBaseline = 'middle'
+                        
+                        const label1 = 'PROPOSED BUILDING'
+                        const label2 = `${realW}${unit} × ${realH}${unit}`
+                        
+                        const y1 = screenCY - 22
+                        const y2 = screenCY + 6
+                        
+                        ctx.strokeText(label1, screenCX, y1)
+                        ctx.fillText(label1, screenCX, y1)
+                        ctx.strokeText(label2, screenCX, y2)
+                        ctx.fillText(label2, screenCX, y2)
+                        ctx.restore()
+                    }
+                })
+
+
+                // Preview for build/parking
+                if ((tool === 'build' || tool === 'parking') && buildStart && previewEnd) {
+                    const sx = Math.min(buildStart.x, previewEnd.x)
+                    const sy = Math.min(buildStart.y, previewEnd.y)
+                    const pw = Math.abs(previewEnd.x - buildStart.x)
+                    const ph = Math.abs(previewEnd.y - buildStart.y)
+                    const screenSX = panX + sx * zoom
+                    const screenSY = panY + sy * zoom
+                    
+                    ctx.save()
+                    if (tool === 'parking') {
+                        ctx.globalAlpha = 0.35
+                        ctx.fillStyle = '#475569'
+                        ctx.fillRect(screenSX, screenSY, pw * zoom, ph * zoom)
+                        ctx.globalAlpha = 1
+                    }
+                    ctx.strokeStyle = tool === 'parking' ? '#475569' : '#a3e635'
+                    ctx.lineWidth = 3.5
+                    ctx.setLineDash([8, 5])
+                    ctx.beginPath()
+                    ctx.rect(screenSX, screenSY, pw * zoom, ph * zoom)
+                    ctx.stroke()
+                    ctx.setLineDash([])
+                    ctx.restore()
+                    
+                    if (calibrationScale && pw > 5 && ph > 5) {
+                        const realW = (pw * calibrationScale).toFixed(0)
+                        const realH = (ph * calibrationScale).toFixed(0)
+                        const labelX = screenSX + (pw * zoom) / 2
+                        const labelY = screenSY + (ph * zoom) / 2
+                        ctx.save()
+                        ctx.fillStyle = tool === 'parking' ? '#475569' : '#a3e635'
+                        ctx.strokeStyle = '#fff'
+                        ctx.lineWidth = 3
+                        ctx.font = 'bold 16px Inter'
+                        ctx.textAlign = 'center'
+                        ctx.textBaseline = 'middle'
+                        const label = `${realW}${unit} × ${realH}${unit}`
+                        ctx.strokeText(label, labelX, labelY)
+                        ctx.fillText(label, labelX, labelY)
+                        ctx.restore()
+                    }
+                }
+
                 // Road preview
                 if (tool === 'road' && tempRoadPoints.length > 0 && roadPreviewPoint) {
                     if (!calibrationScale) return
