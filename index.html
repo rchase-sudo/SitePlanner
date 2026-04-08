@@ -1146,7 +1146,7 @@
                                 setEditingFeature(null); 
                             }, 
                             disabled: !calibrationScale 
-                        }, '🌳 Green'),
+                        }, '🌧️ Stormwater'),
                         createElement('button', { 
                             className: `btn ${tool === 'edit' ? 'active' : ''}`, 
                             onClick: () => { 
@@ -1214,7 +1214,7 @@
                     tool === 'green' && createElement('div', {
                         style: { display: 'flex', alignItems: 'center', gap: '12px', marginLeft: 'auto', background: '#334155', padding: '6px 12px', borderRadius: '8px' }
                     },
-                        createElement('span', { style: { fontSize: '13px', whiteSpace: 'nowrap', color: '#22c55e' } }, '🌳 Green Space'),
+                        createElement('span', { style: { fontSize: '13px', whiteSpace: 'nowrap', color: '#22c55e' } }, '🌧️ Stormwater Area'),
                         tempGreenPoints.length >= 3 && createElement('button', { className: 'btn', style: { background: '#22c55e' }, onClick: finishGreenSpace }, '✅ Finish'),
                         createElement('button', { className: 'btn', onClick: () => { setTempGreenPoints([]); setGreenPreviewPoint(null) } }, 'Cancel')
                     ),
