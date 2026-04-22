@@ -278,8 +278,8 @@
             const drawGreenSpace = useCallback((ctx, screenPoints) => {
                 if (screenPoints.length < 3) return
                 ctx.save()
-                ctx.fillStyle = '#4a8dde'      // Solid green
-                ctx.strokeStyle = '#2258c5'
+                ctx.fillStyle = '#4ade80'      // Solid green
+                ctx.strokeStyle = '#22c55e'
                 ctx.lineWidth = 4
                 ctx.beginPath()
                 ctx.moveTo(screenPoints[0].x, screenPoints[0].y)
@@ -1214,8 +1214,8 @@
                     tool === 'green' && createElement('div', {
                         style: { display: 'flex', alignItems: 'center', gap: '12px', marginLeft: 'auto', background: '#334155', padding: '6px 12px', borderRadius: '8px' }
                     },
-                        createElement('span', { style: { fontSize: '13px', whiteSpace: 'nowrap', color: '#22c55e' } }, '🌧️ Stormwater Area'),
-                        tempGreenPoints.length >= 3 && createElement('button', { className: 'btn', style: { background: '#22c55e' }, onClick: finishGreenSpace }, '✅ Finish'),
+                        createElement('span', { style: { fontSize: '13px', whiteSpace: 'nowrap', color: '#2258c5' } }, '🌧️ Stormwater Area'),
+                        tempGreenPoints.length >= 3 && createElement('button', { className: 'btn', style: { background: '#2258c5' }, onClick: finishGreenSpace }, '✅ Finish'),
                         createElement('button', { className: 'btn', onClick: () => { setTempGreenPoints([]); setGreenPreviewPoint(null) } }, 'Cancel')
                     ),
                     
